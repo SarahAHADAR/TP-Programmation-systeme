@@ -1,0 +1,186 @@
+#include <stdio.h>
+#include<string.h>
+#include<unistd.h>
+#include<stdlib.h>
+#include<sys/wait.h>
+#include <time.h>      // NEW: for clock_gettime and struct timespec
+#include <math.h>      // Optional: for math functions, though usually not needed here
+#include <fcntl.h>    // NEW: For open() flags (O_RDONLY, O_WRONLY, O_CREAT, etc.)
+#include <sys/stat.h> // NEW: For file permissions (like 0666)
+//definition of the message
+const char* WELCOME_MSG="Bienvenue dans le Shell ENSEA. \nPour quitter taper 'exit'.\n";
+const char *ENSEASH="enseash % ";
+const char *BYE_MSG="Bye Bye...\n"; //question 3: exit message
+
+// Global variable for execution time
+long long last_time_ms = 0; // Stores the execution time in milliseconds
+#define CMD_MAX 1024
+// Question 4 we initialize the prompt to exit:0 to match the state after startup
+#define PROMPT_MAX_SIZE 128
+// Prompt formats (Update to include time: |Tms)
+#define PROMPT_SIGNAL_FORMAT "enseash [sign:%d|%lldms] %% "
+#define PROMPT_EXIT_FORMAT "enseash [exit:%d|%lldms] %% "
+
+// Note: %lld is used for long long
+
+//Global variable for status 
+int last_exit_status =0;
+int last_signal = 0;
+char prompt_buffer[PROMPT_MAX_SIZE];
+
+void display_dynamic_prompt() {
+        int len;
+        if (last_signal!= 0){
+                len=snprintf(prompt_buffer, sizeof(prompt_buffer), PROMPT_SIGNAL_FORMAT, last_signal,last_time_ms);
+        }
+        else{
+                len=snprintf(prompt_buffer, sizeof(prompt_buffer), PROMPT_EXIT_FORMAT,last_exit_status,last_time_ms);
+        }
+        write(STDOUT_FILENO, prompt_buffer, len);
+}
+//writing of the message
+int main(){
+        char command_line[CMD_MAX]={0};
+        char *input_file = NULL;  // Store the name of the file for <
+        char *output_file = NULL; // Store the name of the file for >
+ssize_t n;
+        write(STDOUT_FILENO, WELCOME_MSG, strlen(WELCOME_MSG));//the massge is written on the standard output
+        #define MAX_ARGS 32 //maximum capacity for the arguments
+//question 2c : main loop(REPL)
+        while(1){
+//question 1 and 2c: display Enseash  and await next command
+        display_dynamic_prompt();
+//question 2a read the entered command
+        n=read(STDIN_FILENO, command_line, CMD_MAX);
+                if (n==-1){
+                        perror("read error");
+                        continue;
+                }
+                if(n==0){//end of file
+                        break;
+                }
+//replace the final new line character '\n' with the null terminator '\0'
+                if(n>0 && command_line[n-1]=='\n'){
+                        command_line[n-1]='\0';
+                }
+                else{
+                        command_line[n]='\0';
+                }
+}
+//question 3 hamdle internal exit command
+                if (strcmp(command_line, "exit")==0){
+                        break;
+                }
+  // --- Q7: INITIALISATION des redirections pour chaque commande ---
+        char *args[MAX_ARGS + 1];
+        int arg_count = 0;
+        char *token;
+        input_file = NULL;
+        output_file = NULL;
+
+//We take back the first 'token'
+        token=strtok(command_line," ");
+        while(token!=NULL ){
+         // 1. Detection of >
+            if (strcmp(token, ">") == 0) {
+                token = strtok(NULL, " "); // we search the name of the file
+                if (token != NULL) {
+                    output_file = token; // Store the name of the file
+                }
+
+            }
+            // 2. Detection of <
+else if (strcmp(token, "<") == 0) {
+                token = strtok(NULL, " ");
+                if (token != NULL) {
+                    input_file = token; // Store the name of the file
+                }
+            }
+      // 3. command or argument)
+            else if (arg_count < MAX_ARGS) {
+                args[arg_count] = token; 
+                arg_count++;
+            }
+
+            if (strcmp(token, ">") != 0 && strcmp(token, "<") != 0) {
+                 token = strtok(NULL, " "); 
+            }
+        }
+
+        args[arg_count] = (char *)NULL;
+ // Validation minimale of the synthaxis of redirection
+        if ((output_file != NULL && input_file != NULL && (output_file == input_file)) || arg_count == 0) {
+                          if (arg_count == 0 && (output_file != NULL || input_file != NULL)) {
+
+write(STDERR_FILENO, "enseash: Missing command.\n", 26);
+} else if (arg_count == 0) {
+                 continue; // Input only empty line
+             }
+             if (arg_count == 0) continue;
+        }
+//question 2b execute a simple command
+                pid_t pid=fork();
+                int status;//to store the child's exit status
+                if (pid==-1){//failed to create process
+                        perror("fork error");
+                        continue;
+                }
+                else if(pid==0){ //child process code
+                          // --- Q7: REDIRECTION OF THE OUTPUT (>) ---
+            if (output_file != NULL) {
+                int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd_out == -1) {
+                    perror("open output file error");
+                    exit(1);
+                }
+   
+                // Redirige STDOUT_FILENO (1) vers le fichier
+                dup2(fd_out, STDOUT_FILENO);
+close(fd_out); // Ferme le descripteur de fichier original
+            }
+                    // --- Q7: REDIRECTION OF THE INPUT (<) ---
+            if (input_file != NULL) {
+
+                int fd_in = open(input_file, O_RDONLY);
+                if (fd_in == -1) {
+                    perror("open input file error");
+                    exit(1);
+                }
+  dup2(fd_in, STDIN_FILENO);
+                close(fd_in); // Ferme le descripteur de fichier original
+            }  execvp(args[0], args); 
+
+            perror("execvp error: Command not found or execution error");
+            exit(127);
+        }
+                        else{ // parent's process code
+                        struct timespec start_time, end_time;
+                        clock_gettime(CLOCK_MONOTONIC,  &start_time);
+                        if (wait(&status)==-1){//wait for the created child process to terminate 
+                                perror("wait error");
+                                last_exit_status=127;
+last_signal=0;
+
+                        }
+                        else{
+                                clock_gettime(CLOCK_MONOTONIC,  &end_time);
+                                long long delta_sec = end_time.tv_sec - start_time.tv_sec;
+                                long long delta_nsec = end_time.tv_nsec - start_time.tv_nsec;
+                                last_time_ms = delta_sec * 1000 + delta_nsec / 1000000; 
+                                if (WIFEXITED(status)){
+                                        last_exit_status=WEXITSTATUS(status);
+                                        last_signal = 0;
+                                }
+                                else if (WIFSIGNALED(status)){
+                                        last_signal = WTERMSIG(status);
+                                        last_exit_status=0;
+                                }
+                                else{
+                                        last_exit_status=126;
+                                        last_signal=0;}
+                        }
+                }
+}
+write(STDOUT_FILENO, BYE_MSG, strlen(BYE_MSG));
+        return EXIT_SUCCESS;
+}
